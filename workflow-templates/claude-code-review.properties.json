@@ -1,0 +1,6 @@
+{
+  "name": "Claude Code Review",
+  "description": "Automated PR review by Claude — posts review comments on every pull request",
+  "iconName": "octicon code-review",
+  "categories": ["Code Quality", "Security"]
+}

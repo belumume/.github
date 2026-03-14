@@ -1,0 +1,6 @@
+{
+  "name": "Claude Code",
+  "description": "Interactive Claude Code — responds to @claude mentions in issues and PRs",
+  "iconName": "octicon terminal",
+  "categories": ["Automation", "Code Quality"]
+}
