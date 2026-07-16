@@ -25,14 +25,23 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
+          track_progress: true
+
           prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
             Review this pull request. Focus on bugs, security vulnerabilities,
             and logic errors. Read the actual code before flagging anything.
             Be precise and actionable. False positives waste developer time.
+
+            Provide inline comments for specific issues and a top-level
+            comment for overall observations.
 
             Privacy: Never quote secrets, credentials, API keys, tokens, or
             personally identifiable information in your review comments.
             Flag the issue and its location, but do not reproduce the
             sensitive value in the comment.
 
-          use_sticky_comment: true
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
