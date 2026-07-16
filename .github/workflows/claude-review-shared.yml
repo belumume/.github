@@ -21,11 +21,11 @@ jobs:
           fetch-depth: 1
 
       - name: Run Claude Code Review
-        uses: anthropics/claude-code-action@beta
+        uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
-          direct_prompt: |
+          prompt: |
             Review this pull request. Focus on bugs, security vulnerabilities,
             and logic errors. Read the actual code before flagging anything.
             Be precise and actionable. False positives waste developer time.
