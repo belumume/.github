@@ -21,6 +21,7 @@ jobs:
           fetch-depth: 1
 
       - name: Run Claude Code Review
+        id: review
         uses: anthropics/claude-code-action@d40ddef4c030e508327d6e35a9c45f3368482c50 # v1.0.195
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -38,6 +39,17 @@ jobs:
             Provide inline comments for specific issues and a top-level
             comment for overall observations.
 
+            Do this review yourself, in this session. Do NOT dispatch Task
+            subagents and do NOT write that work is "delegated" or "in
+            progress" and then end your turn: the Task tool is not in the
+            allowed set here, so a dispatch cannot run, and a session that
+            ends narrating one reports success having said nothing
+            (anthropics/claude-code-action#1515).
+
+            Every checkbox you write must be checked before you finish. If
+            you run out of room, say what you did not cover in the summary
+            rather than leaving a box open.
+
             Privacy: Never quote secrets, credentials, API keys, tokens, or
             personally identifiable information in your review comments.
             Flag the issue and its location, but do not reproduce the
@@ -45,3 +57,58 @@ jobs:
 
           claude_args: |
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+
+      # A review that could not report is a review that did not happen, and it must not be able
+      # to report success. The action returns success whenever the session ended cleanly,
+      # including when it ended mid-dispatch having posted only the progress checklist
+      # (anthropics/claude-code-action#1515, OPEN). Measured on belumume/zeroclaw-solana PR 140:
+      # runs 32990853400 and 33068244870 both concluded SUCCESS with the tracking comment left at
+      # 8 and 4 unchecked boxes, one of them naming a finding that was never posted.
+      #
+      # Calibrated against 18 real tracking comments on that repo before this step was added:
+      # all 18 embed their own run URL, the 16 healthy ones carry 0 unchecked boxes and pass,
+      # and only those 2 fail. So this fails the runs it is meant to fail and nothing else.
+      - name: Assert the review actually reported
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          RUN_ID: ${{ github.run_id }}
+          CONCLUSION: ${{ steps.review.outputs.conclusion }}
+          EXEC_FILE: ${{ steps.review.outputs.execution_file }}
+        run: |
+          set -uo pipefail
+
+          if [ "${CONCLUSION:-}" != "success" ]; then
+            echo "::error::The review step itself concluded '${CONCLUSION:-<none>}'."
+            exit 1
+          fi
+
+          # The action stamps its own run URL into the tracking comment it owns, so this selects
+          # THIS run's comment rather than whichever one happens to be newest.
+          body=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                   --jq "map(select(.body | contains(\"actions/runs/$RUN_ID\"))) | last | .body // empty")
+
+          # Print the denominator: an unreadable or absent comment must not read as a clean review.
+          echo "tracking comment for run $RUN_ID: ${#body} bytes"
+
+          if [ -z "$body" ]; then
+            echo "::error::No comment on PR $PR carries this run's id. The review posted nothing."
+            exit 1
+          fi
+
+          # grep -c prints 0 and exits 1 on no-match, so guard the status, not the value.
+          unchecked=$(printf '%s' "$body" | grep -c -- '- \[ \]' || true)
+          if [ "$unchecked" -gt 0 ]; then
+            echo "::error::Review truncated: $unchecked unchecked item(s) left in the tracking comment."
+            echo "A green check here would be indistinguishable from a clean review. Re-run the job."
+            exit 1
+          fi
+
+          if [ -n "${EXEC_FILE:-}" ] && [ -f "$EXEC_FILE" ]; then
+            denials=$(jq '[.[] | select(.type == "result")] | last | .permission_denials_count // 0' "$EXEC_FILE" 2>/dev/null || echo 0)
+            [ "${denials:-0}" -gt 0 ] && echo "::warning::$denials tool call(s) were denied by the allowlist."
+          fi
+
+          echo "Review reported: $unchecked unchecked item(s), ${#body} bytes."
