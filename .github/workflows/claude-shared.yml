@@ -31,3 +31,8 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           include_fix_links: false
+          # The action asks for a "Generated with Claude Code" signature linking to
+          # claude.ai in the PR body of its "Create a PR" link, and adds its own
+          # link carrying that signature when Claude gives none.
+          claude_args: |
+            --append-system-prompt "Never include a claude.ai link anywhere: not in comments, commit messages, PR titles or bodies, or the prefilled body of a Create a PR link. Leave out the Generated with Claude Code signature. Whenever you work on a new branch, always give a Create a PR link whose prefilled body has no claude.ai link."
