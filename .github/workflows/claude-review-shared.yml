@@ -22,7 +22,10 @@ jobs:
     concurrency:
       group: claude-review-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: true
-    runs-on: ubuntu-latest
+    # One-CPU runner, a third of the ubuntu-latest price. Reviews have taken
+    # under ten minutes, and this runner stops any job at fifteen.
+    runs-on: ubuntu-slim
+    timeout-minutes: 14
     permissions:
       contents: read
       pull-requests: write
