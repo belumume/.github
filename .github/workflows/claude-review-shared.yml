@@ -8,6 +8,18 @@ on:
 
 jobs:
   claude-review:
+    # Review a pull request once, when a person opens, reopens or readies it.
+    # Pushes to an open PR, bot-authored PRs and the guard/ and dependabot/
+    # branches are skipped, and a skipped job starts no runner.
+    if: >-
+      github.event_name != 'pull_request' ||
+      (contains(fromJSON('["opened","ready_for_review","reopened"]'), github.event.action) &&
+       github.event.pull_request.user.type != 'Bot' &&
+       !startsWith(github.head_ref, 'guard/') &&
+       !startsWith(github.head_ref, 'dependabot/'))
+    concurrency:
+      group: claude-review-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     permissions:
       contents: read
