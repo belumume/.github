@@ -1,0 +1,6 @@
+{
+  "name": "Auto PR for Claude branches",
+  "description": "Opens the PR for a pushed claude/* branch from its commit messages, so cloud sessions never write the PR body",
+  "iconName": "octicon git-pull-request",
+  "categories": ["Automation"]
+}

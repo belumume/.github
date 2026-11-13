@@ -8,7 +8,24 @@ on:
 
 jobs:
   claude-review:
-    runs-on: ubuntu-latest
+    # Review a pull request once, when a person opens, reopens or readies it.
+    # Drafts wait for ready_for_review. Pushes to an open PR, bot-authored PRs
+    # and the guard/ and dependabot/ branches are skipped, and a skipped job
+    # starts no runner.
+    if: >-
+      github.event_name != 'pull_request' ||
+      (contains(fromJSON('["opened","ready_for_review","reopened"]'), github.event.action) &&
+       !github.event.pull_request.draft &&
+       github.event.pull_request.user.type != 'Bot' &&
+       !startsWith(github.head_ref, 'guard/') &&
+       !startsWith(github.head_ref, 'dependabot/'))
+    concurrency:
+      group: claude-review-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    # One-CPU runner, a third of the ubuntu-latest price. Reviews have taken
+    # under ten minutes, and this runner stops any job at fifteen.
+    runs-on: ubuntu-slim
+    timeout-minutes: 14
     permissions:
       contents: read
       pull-requests: write
@@ -20,13 +37,32 @@ jobs:
         with:
           fetch-depth: 1
 
+      # On a pull request that is closed or merged by the time the review starts,
+      # the action opens a new branch and posts a "Create a PR" link whose
+      # prefilled body carries a claude.ai URL, so review open pull requests only.
+      - name: Check the pull request is still open
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          state=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json state --jq .state)
+          if [ "$state" = OPEN ]; then
+            echo "open=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "open=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Pull request #$PR is $state, so it is not reviewed."
+          fi
+
       - name: Run Claude Code Review
         id: review
+        if: steps.pr.outputs.open == 'true'
         uses: anthropics/claude-code-action@d40ddef4c030e508327d6e35a9c45f3368482c50 # v1.0.195
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
           track_progress: true
+          include_fix_links: false
 
           prompt: |
             REPO: ${{ github.repository }}
@@ -55,6 +91,9 @@ jobs:
             Flag the issue and its location, but do not reproduce the
             sensitive value in the comment.
 
+            Never include links to claude.ai in any comment, including
+            "Fix this" links and "Generated with Claude Code" footers.
+
           claude_args: |
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
 
@@ -69,7 +108,7 @@ jobs:
       # all 18 embed their own run URL, the 16 healthy ones carry 0 unchecked boxes and pass,
       # and only those 2 fail. So this fails the runs it is meant to fail and nothing else.
       - name: Assert the review actually reported
-        if: always()
+        if: always() && steps.pr.outputs.open == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}

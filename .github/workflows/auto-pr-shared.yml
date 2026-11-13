@@ -1,0 +1,54 @@
+name: Auto PR for Claude branches (Shared)
+# Cloud sessions add a footer linking their session to any PR body they write, and project
+# settings do not turn it off. Sessions are told to push a claude/* branch and stop; this
+# opens the PR from the commit messages instead, so no session link is ever written.
+# The calling repo must allow GitHub Actions to create pull requests. A PR opened with the
+# workflow token does not start that repo's pull_request workflows on its own.
+
+on:
+  workflow_call:
+
+jobs:
+  open-pr:
+    if: startsWith(github.ref, 'refs/heads/claude/') && !github.event.deleted
+    runs-on: ubuntu-latest
+    concurrency:
+      group: auto-pr-${{ github.repository }}-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - name: Open a PR if the branch has none
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_REF#refs/heads/}"
+          open=$(gh pr list --head "$branch" --state open --json number --jq length)
+          if [ "$open" != "0" ]; then
+            echo "PR already open for $branch"; exit 0
+          fi
+          git fetch --quiet origin "$BASE"
+          if [ -z "$(git rev-list "origin/$BASE..HEAD")" ]; then
+            echo "No commits ahead of $BASE"; exit 0
+          fi
+          # Lines carrying a session link, trailer, attribution marker or session id, plus the
+          # agent footers and headers, are dropped whatever wrote them.
+          pat='claude(\.|%2e)ai|claude-session[:]|co-authored-by:.*(claude|anthropic)|claude-projects-attributio[n]|(session|cse|cmsg|chan)_01[0-9a-z]{20,}|generated (with|by) .*claude code|requested by .*project thread'
+          scrub() { grep -viE "$pat" || true; }
+          title=$(git log --reverse --format=%s "origin/$BASE..HEAD" | scrub | sed -n 1p)
+          [ -n "$title" ] || title="${branch#claude/}"
+          {
+            echo "Commits on \`$branch\`:"
+            echo
+            git log --reverse --format='### %s%n%n%b' "origin/$BASE..HEAD" | scrub
+          } | head -c 60000 > "$RUNNER_TEMP/body.md" || true
+          if grep -qiE "$pat" <<<"$title" || grep -qiE "$pat" "$RUNNER_TEMP/body.md"; then
+            echo "::error::title or body still matches the link pattern; not opening the PR"; exit 1
+          fi
+          gh pr create --base "$BASE" --head "$branch" --title "$title" --body-file "$RUNNER_TEMP/body.md"
