@@ -106,31 +106,44 @@ jobs:
       #
       # Calibrated against 18 real tracking comments on that repo before this step was added:
       # all 18 embed their own run URL, the 16 healthy ones carry 0 unchecked boxes and pass,
-      # and only those 2 fail. So this fails the runs it is meant to fail and nothing else.
+      # and only those 2 fail.
+      #
+      # The action also returns success without running a review, and without setting
+      # `conclusion`, when it skips itself: a pull request that adds or edits a workflow file
+      # fails its workflow validation by design. That run is a skip, not a silent review, so it
+      # stays green with a notice.
       - name: Assert the review actually reported
-        if: always() && steps.pr.outputs.open == 'true'
+        if: ${{ !cancelled() && steps.pr.outputs.open == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           RUN_ID: ${{ github.run_id }}
+          OUTCOME: ${{ steps.review.outcome }}
           CONCLUSION: ${{ steps.review.outputs.conclusion }}
           EXEC_FILE: ${{ steps.review.outputs.execution_file }}
         run: |
           set -uo pipefail
 
-          if [ "${CONCLUSION:-}" != "success" ]; then
-            echo "::error::The review step itself concluded '${CONCLUSION:-<none>}'."
+          if [ "${OUTCOME:-}" != "success" ]; then
+            echo "::error::The review step itself ended '${OUTCOME:-<none>}'."
             exit 1
           fi
 
-          # The action stamps its own run URL into the tracking comment it owns, so this selects
-          # THIS run's comment rather than whichever one happens to be newest.
+          if [ -z "${CONCLUSION:-}" ]; then
+            echo "::notice::The review action skipped itself (no review ran), for example on a pull request that adds or edits a workflow file. Nothing to check."
+            exit 0
+          fi
+
+          # The action stamps its own run URL into the tracking comment it owns. All pages are
+          # merged before picking the newest match, so a re-run on a pull request with more than
+          # 100 comments still reads only its own, latest comment.
           body=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
-                   --jq "map(select(.body | contains(\"actions/runs/$RUN_ID\"))) | last | .body // empty")
+                   | jq -rs --arg run "actions/runs/$RUN_ID)" \
+                       'add | map(select(.body | contains($run))) | last | .body // empty')
 
           # Print the denominator: an unreadable or absent comment must not read as a clean review.
-          echo "tracking comment for run $RUN_ID: ${#body} bytes"
+          echo "tracking comment for run $RUN_ID: ${#body} characters"
 
           if [ -z "$body" ]; then
             echo "::error::No comment on PR $PR carries this run's id. The review posted nothing."
@@ -138,7 +151,7 @@ jobs:
           fi
 
           # grep -c prints 0 and exits 1 on no-match, so guard the status, not the value.
-          unchecked=$(printf '%s' "$body" | grep -c -- '- \[ \]' || true)
+          unchecked=$(printf '%s' "$body" | grep -c -- '^- \[ \]' || true)
           if [ "$unchecked" -gt 0 ]; then
             echo "::error::Review truncated: $unchecked unchecked item(s) left in the tracking comment."
             echo "A green check here would be indistinguishable from a clean review. Re-run the job."
@@ -146,8 +159,10 @@ jobs:
           fi
 
           if [ -n "${EXEC_FILE:-}" ] && [ -f "$EXEC_FILE" ]; then
-            denials=$(jq '[.[] | select(.type == "result")] | last | .permission_denials_count // 0' "$EXEC_FILE" 2>/dev/null || echo 0)
-            [ "${denials:-0}" -gt 0 ] && echo "::warning::$denials tool call(s) were denied by the allowlist."
+            denials=$(jq '[.[] | select(.type == "result")] | last | (.permission_denials // []) | length' "$EXEC_FILE" 2>/dev/null || echo 0)
+            if [ "${denials:-0}" -gt 0 ]; then
+              echo "::warning::$denials tool call(s) were denied by the allowlist."
+            fi
           fi
 
-          echo "Review reported: $unchecked unchecked item(s), ${#body} bytes."
+          echo "Review reported: $unchecked unchecked item(s), ${#body} characters."
