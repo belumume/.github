@@ -91,6 +91,9 @@ jobs:
             Flag the issue and its location, but do not reproduce the
             sensitive value in the comment.
 
+            No slop: every comment must be worth more than the time it
+            takes to read. No filler, no restating the diff.
+
             Never include links to claude.ai in any comment, including
             "Fix this" links and "Generated with Claude Code" footers.
 
